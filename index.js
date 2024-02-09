@@ -41,10 +41,10 @@ mongoose.connect(process.env.MONGODB_URI)
 app.use('/', routers);
 
 //Users 
-app.use("/users", userRouter)
+app.use("/api/users", userRouter)
 
 //Stations 
-app.use("/stations", stationRouter)
+app.use("/api/stations", stationRouter)
 
 //HANDLER ERRORS
 app.use(notFoundHandler);
