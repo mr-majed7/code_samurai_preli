@@ -1,13 +1,10 @@
 const express = require('express');
 const Users = require("../models/Users");
+const {addUser} = require("../controllers/controllers")
 
 
 const router = express.Router();
 
-router.post("/",async(req ,res, next)=> {
-    const newUser = new Users(req.body)
-    await newUser.save()
-    res.status(201).json(newUser)
-})
+router.post("/",addUser)
 
 module.exports = router;

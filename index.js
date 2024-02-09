@@ -21,19 +21,20 @@ app.use(express.urlencoded({extended: true}));
 mongoose.connect(process.env.MONGODB_URI)
     .then(() =>{
         console.log('Connected to MongoDB...');
-        // dropBooksCollection();
+        dropCollection();
     } )
     .catch(err => console.error('Could not connect to MongoDB...'));
 
 //DROP DATABASE
-// const dropBooksCollection = async () => {
-//     try {
-//       await mongoose.connection.collection('books').drop();
-//       console.log('The "Books" collection has been dropped successfully.');
-//     } catch (error) {
-//       console.error('Error dropping "Books" collection:', error);
-//     }
-//   };
+const dropCollection = async () => {
+    try {
+      await mongoose.connection.collection('users').drop();
+      await mongoose.connection.collection('stations').drop();
+      await mongoose.connection.collection('trains').drop();
+    } catch (error) {
+      console.error(error);
+    }
+  };
   
 
     

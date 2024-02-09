@@ -76,236 +76,171 @@ async function addBalance(req, res, next) {
     }
 }
 
-class PriorityQueue {
-    constructor(comparator = (a, b) => a - b) {
-        this.comparator = comparator;
-        this.elements = [];
-    }
-
-    enqueue(element) {
-        this.elements.push(element);
-        this.elements.sort(this.comparator);
-    }
-
-    dequeue() {
-        return this.elements.shift();
-    }
-
-    isEmpty() {
-        return this.elements.length === 0;
-    }
-}
-
-
-function findTrainConnecting(station, distances, graph) {
-    // Find the train used to reach this station from its parent in the path.
-    const parent = distances.get(station);
-    if (!parent) {
-      return null; // Start station doesn't have a train
-    }
-  
-    for (const [neighbor, train] of graph[parent]) {
-      if (neighbor === station) {
-        return train;
-      }
-    }
-  
-    return null; // Should not reach here if path is valid
-}
-
-function getNextArrivalTime(departureTime, train, station) {
-    // Get the departure time of the train from the previous station
-    const prevStop = train.stops.find(stop => stop.station_id === station);
-    if (!prevStop) {
-        return null; // This shouldn't happen if the graph is constructed properly
-    }
-    
-    const departureTimestamp = new Date(departureTime);
-    const arrivalTimestamp = new Date(prevStop.departure_time);
-
-    // Assume a fixed travel time for simplicity (can be adjusted based on actual train schedules)
-    const travelTime = 60 * 60 * 1000; // 1 hour in milliseconds
-
-    // Calculate the next arrival time based on departure time and travel time
-    const nextArrivalTimestamp = new Date(arrivalTimestamp.getTime() + travelTime);
-    return nextArrivalTimestamp.toISOString();
-}
-
-
 async function purchaseTicket(req, res, next) {
-    const { wallet_id, time_after, station_from, station_to } = req.body;
-
-    const user = await User.find({ user_id: wallet_id});
-    if (!user) {
-        return res.status(400).json({ message: 'Invalid wallet ID' });
-    }
-
-    const balance = user.balance;
-    console.log(typeof(balance))
-
-    // Find optimal itinerary using Dijkstra's algorithm
-    const itinerary = await findOptimalItinerary(station_from, station_to, time_after); // Await here
-
-    if (!itinerary) {
-        return res.status(403).json({ message: 'No ticket available for this route' });
-    }
-
-    // Calculate ticket cost based on the chosen itinerary
-    const ticketCost = await calculateTicketCost(itinerary); // Also await here
-
-    if (ticketCost > balance) {
-        return res.status(402).json({ message: `Recharge amount: ${ticketCost - balance} to purchase the ticket` });
-    }
-
-    // Update user balance (assuming you have a `decreaseBalance` method in your User model)
-    await user.decreaseBalance(ticketCost);
-
-    // Generate unique ticket ID (use your preferred method)
-    const ticketId = Math.random().toString(36).substring(2, 15); // Example
-
-    // Respond with successful purchase details
-    res.status(201).json({
-        ticket_id: ticketId,
-        wallet_id,
-        balance: user.balance,
-        stations: itinerary.map(station => ({
-        station_id: station.station_id,
-        train_id: station.train.id,
-        arrival_time: station.arrivalTime,
-        departure_time: station.departureTime,
-        })),
-    });
-}
-
-
-async function findOptimalItinerary(station_from, station_to, time_after) {
-    // Use Dijkstra's algorithm to find the cheapest path,
-    // adapting it to handle train schedules and arrival times.
-  
-    // Create a graph:
-    const station = await Station.find();
-    const train = await Train.find();
-    const graph = createGraph(station, train); // Assumes `stations` and `trains` are loaded
-  
-    // Initialize distances and visited stations:
-    const distances = new Map();
-    const visited = new Set();
-  
-    distances.set(station_from, 0); // Start from initial station with fare 0
-  
-    // Priority queue for unvisited stations with lowest estimated cost:
-    const pq = new PriorityQueue((a, b) => distances.get(a) - distances.get(b));
-    pq.enqueue(station_from);
-  
-    while (!pq.isEmpty()) {
-      const current = pq.dequeue();
-  
-      if (current === station_to) {
-        return reconstructItinerary(current, distances, graph); // Found!
-      }
-  
-      if (visited.has(current)) {
-        continue; // Already visited
-      }
-  
-      visited.add(current);
-  
-      for (const neighbor of graph[current]) {
-        const nextStation = neighbor[0];
-        const train = neighbor[1];
-        const nextArrivalTime = getNextArrivalTime(distances.get(current), train, nextStation); // Consider arrival time
-  
-        if (nextArrivalTime && nextArrivalTime >= time_after) {
-          const tentativeFare = distances.get(current) + neighbor[2]; // Fare for this edge
-  
-          if (!distances.has(nextStation) || tentativeFare < distances.get(nextStation)) {
-            distances.set(nextStation, tentativeFare);
-            pq.enqueue(nextStation);
+    try {
+        const { wallet_id, time_after, station_from, station_to } = req.body;
+        const user = await User.findOne({ user_id: wallet_id });
+        const userBalance = user.balance;
+        const [hours, minutes] = time_after.split(':').map(Number);
+    
+        const totalMinutesAfter = hours * 60 + minutes;
+    
+        const trains = await Train.find({
+          'stops.station_id': { $all: [station_from, station_to] }
+        }).populate('stops', 'station_id departure_time fare -_id').sort('stops.departure_time');
+    
+        const availableTrains = trains.filter(train =>
+          train.stops.some(stop =>
+            stop.station_id === station_from &&
+            minutesAfter(stop.departure_time) > totalMinutesAfter
+          )
+        );
+    
+        if (availableTrains.length === 0) {
+            const error = new Error(`"no ticket available for station: ${station_from} to station:${station_to}`);
+            error.status = 403;
+            throw error;
+        }
+        const selectedTrain = availableTrains[0];
+        let totalFare = 0;
+        let foundStartStation = false;
+    
+        for (const stop of selectedTrain.stops) {
+          if (stop.station_id === station_from) {
+            foundStartStation = true;
+          }
+    
+          if (foundStartStation) {
+            totalFare += stop.fare;
+    
+            if (stop.station_id === station_to) {
+              break;
+            }
           }
         }
+    
+        if (userBalance < totalFare) {
+          const amountShort = totalFare - userBalance;
+          const erro = new Error(`recharge amount: ${amountShort} to purchase the ticket`)
+          erro.status = 402;
+          throw erro;
+        }
+    
+        const updatedBalance = userBalance - totalFare;
+    
+        const stations = selectedTrain.stops.reduce((acc, stop) => {
+          if (stop.station_id === station_from || stop.station_id === station_to) {
+            acc.push({
+              station_id: stop.station_id,
+              train_id: selectedTrain.train_id,
+              departure_time: stop.departure_time || null,
+              arrival_time: stop.station_id === station_to ? stop.arrival_time || null : null
+            });
+          }
+          return acc;
+        }, []);
+    
+        const ticket_id = Math.floor(Math.random() * 1000000);
+    
+        res.status(200).json({ ticket_id, balance: updatedBalance, wallet_id, stations });
+      } catch (error) {
+        next(error);
       }
-    }
-  
-    return null; // No itinerary found within constraints
-  }
-  
-  function createGraph(stations, trains) {
-    // Create a graph representation where nodes are stations and edges are train connections.
-    // Store fare and train info along with the edge.
-    const graph = {};
-    for (const station of stations) {
-      graph[station._id] = []; // Initialize empty list of connections for each station
-    }
-  
-    for (const train of trains) {
-      for (let i = 0; i < train.stops.length - 1; i++) {
-        const currentStop = train.stops[i];
-        const nextStop = train.stops[i + 1];
-        graph[currentStop.station_id].push([
-          nextStop.station_id,
-          train,
-          currentStop.fare, // Fare is for the current-next stop segment
-        ]);
-      }
-    }
-  
-    return graph;
-  }
-  
-  function reconstructItinerary(station, distances, graph) {
-    // Backtrack through the path to construct the itinerary.
-    const stations = [];
-    while (station) {
-      stations.push({
-        station_id: station,
-        train_id: findTrainConnecting(station, distances, graph).train_id,
-        arrival_time: getNextArrivalTime(distances.get(station.parent), station, station),
-      });
-      station = station.parent;
-    }
-    return stations.reverse();
-  }
-  
-  function findTrainConnecting(station, distances, graph) {
-    // Find the train used to reach this station from its parent in the path.
-    const parent = station.parent;
-    if (!parent) {
-      return null; // Start station doesn't have a train
-    }
-  
-    for (const [neighbor, train] of graph[parent]) {
-      if (neighbor === station) {
-        return train;
-      }
-    }
-  
-    return null; // Should not reach here if path is valid
+}
+
+function minutesAfter(timeString) {
+    const [hours, minutes] = timeString.split(':').map(Number);
+    return hours * 60 + minutes;
   }
 
-async function calculateTicketCost(itineraryPromise) {
+const addUser = async(req, res)=> {
     try {
-      // Wait for the itinerary promise to resolve
-      const itinerary = await itineraryPromise;
-      
-      // Check if itinerary is an array
-      if (!Array.isArray(itinerary)) {
-        // If itinerary is not an array, return 0 or handle the error accordingly
-        return 0; // You can also throw an error here if necessary
-      }
-      
-      // Sum the fares of each segment in the itinerary.
-      return itinerary.reduce((total, station) => total + station.fare, 0);
-    } catch (error) {
-      console.error('Error calculating ticket cost:', error);
-      return 0; // Return 0 or handle the error accordingly
+        const newUser = new Users(req.body)
+        await newUser.save()
+        res.status(201).json(newUser)
+    }catch (error) {
+        next(error);
     }
-  }
-  
+}
+
+const addStation = async(req, res)=> {
+    try{
+        const newStation = new Station(req.body)
+        await newStation.save()
+        res.status(201).json(newStation)
+    }catch (error) {
+        next(error);
+    }
+}
+
+const allStation = async(req, res)=> {
+    try{
+        const allStat = await Station.find({})
+        res.status(200).json({stations: allStat})
+    }catch (error) {    
+        next(error);
+    }
+}
+ 
+async function allTrains(req,res,next){
+    try {
+        const station  = await Station.findOne({station_id: req.params.station_id});
+        if (!station) {
+            const error = new Error(`station with id: ${req.params.station_id} was not found`);
+            error.status = 404;
+            throw error;
+        }else{
+            const stationId = parseInt(req.params.station_id);
+        const allTrains = await Train.find().populate('stops', 'station_id arrival_time departure_time -_id');
+    
+        const trainsAtStation = allTrains.reduce((acc, train) => {
+          const stop = train.stops.find(stop => stop.station_id === stationId);
+          if (stop) {
+            acc.push({
+              train_id: train.train_id,
+              arrival_time: stop.arrival_time || null,
+              departure_time: stop.departure_time || null
+            });
+          }
+          return acc;
+        }, []);
+    
+        if (trainsAtStation.length === 0) {
+          return res.status(200).json({ station_id: stationId, trains: [] });
+        }
+        trainsAtStation.sort((a, b) => {
+          if (a.departure_time === b.departure_time) {
+            if (!a.arrival_time && !b.arrival_time) {
+              return a.train_id - b.train_id;
+            } else if (!a.arrival_time) {
+              return -1;
+            } else if (!b.arrival_time) {
+              return 1;
+            } else {
+              return a.arrival_time.localeCompare(b.arrival_time) || a.train_id - b.train_id;
+            }
+          } else {
+            return a.departure_time.localeCompare(b.departure_time) || a.train_id - b.train_id;
+          }
+        });
+    
+        res.status(200).json({ station_id: stationId, trains: trainsAtStation });
+        }
+      } catch (error) {
+        next(error);        
+      }
+}
+    
 
 module.exports = {
     addTrain,
     getBalance,
     addBalance,
+    purchaseTicket,
+    addUser,
+    addStation,
+    allStation,
+    allTrains,
     purchaseTicket
 }
 
