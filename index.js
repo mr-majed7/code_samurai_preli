@@ -6,6 +6,8 @@ const mongoose = require('mongoose');
 //INTERNAL IMPORTS
 const {notFoundHandler,errorHandler} = require('./middlewares/errorHandler');
 const routers = require('./routes/routers');
+const userRouter = require("./routes/userRouter")
+const stationRouter = require("./routes/stationRouter")
 
 const app = express();
 dotenv.config();
@@ -37,6 +39,12 @@ mongoose.connect(process.env.MONGODB_URI)
     
 //ROUTES
 app.use('/api', routers);
+
+//Users 
+app.use("/api/users", userRouter)
+
+//Stations 
+app.use("/api/stations", stationRouter)
 
 //HANDLER ERRORS
 app.use(notFoundHandler);
