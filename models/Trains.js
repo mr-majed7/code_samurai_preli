@@ -7,11 +7,9 @@ const stopSchema = new mongoose.Schema({
     },
     arrival_time: {
         type: String,
-        required: true
     },
     departure_time:{
         type: String,
-        required: true
     },
     fare:{
         type: Number,

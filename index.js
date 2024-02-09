@@ -36,7 +36,7 @@ mongoose.connect(process.env.MONGODB_URI)
 
     
 //ROUTES
-app.use('/', routers);
+app.use('/api', routers);
 
 //HANDLER ERRORS
 app.use(notFoundHandler);
